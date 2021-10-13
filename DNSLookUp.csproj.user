@@ -1,5 +1,5 @@
 ﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <StartArguments>zbrozek.ru home.zbrozek.ru mail.zbrozek.ru nms.zbrozek.ru _jabber._tcp.zbrozek.ru</StartArguments>
+    <StartArguments>TXT zbrozek.ru dkxce.ru yandex.ru</StartArguments>
   </PropertyGroup>
 </Project>

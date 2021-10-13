@@ -1,0 +1,5 @@
+C:\Downloads\CD-REC\DNSLookup-main\DNSLookup-main\bin\Debug\DNSLookUp.exe
+C:\Downloads\CD-REC\DNSLookup-main\DNSLookup-main\bin\Debug\DNSLookUp.pdb
+C:\Downloads\CD-REC\DNSLookup-main\DNSLookup-main\obj\Debug\ResolveAssemblyReference.cache
+C:\Downloads\CD-REC\DNSLookup-main\DNSLookup-main\obj\Debug\DNSLookUp.exe
+C:\Downloads\CD-REC\DNSLookup-main\DNSLookup-main\obj\Debug\DNSLookUp.pdb

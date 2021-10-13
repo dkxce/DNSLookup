@@ -1,15 +1,37 @@
+//                      //
+// Author Milok Zbrozek //
+//   milokz@gmail.com   //
+//                      //
+
 using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Runtime.InteropServices;
 
-//
-// Author Milok Zbrozek
-//
 namespace DNS
 {
     public class DNSLookUp
     {
+        public class ResponseRecord
+        {
+            public QueryTypes respType;
+            public string respName;
+            public string respValue;
+
+            public ResponseRecord() { }
+            public ResponseRecord(QueryTypes rType, string rName, string rValue) { respType = rType; respName = rName; respValue = rValue; }
+
+            public static bool Exists(List<ResponseRecord> rr, ResponseRecord r)
+            {
+                if (rr == null) return false;
+                if (rr.Count == 0) return false;
+                foreach (ResponseRecord _r in rr)
+                    if ((_r.respName == r.respName) && (_r.respType == r.respType) && (_r.respValue == r.respValue))
+                        return true;
+                return false;
+            }
+        }
+
         //
         // http://msdn.microsoft.com/en-us/library/ms682016
         //
@@ -20,6 +42,7 @@ namespace DNS
         // ppQueryResultsSet [out, optional] - Optional. A pointer to a pointer that points to the list of RRs that comprise the response. For more information, see the Remarks section.
         // pReserved - null (0)
         //
+        
         [DllImport("dnsapi", EntryPoint = "DnsQuery_W", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
         private static extern int DnsQuery([MarshalAs(UnmanagedType.VBByRefStr)]ref string pszName, QueryTypes wType, QueryOptions options, int aipServers, ref IntPtr ppQueryResults, int pReserved);
 
@@ -91,7 +114,6 @@ namespace DNS
             DNS_TYPE_ANY = 0x00ff
         }
 
-        //
         // http://msdn.microsoft.com/en-us/library/cc982162
         public enum QueryOptions
         {
@@ -121,7 +143,7 @@ namespace DNS
         ///     ¬ызываетс€ дл€ каждой записи DNS
         /// </summary>
         /// <param name="DNSQueryResult">”казатель на структуру записи</param>
-        public delegate void OnDNSResponse(IntPtr DNSQueryResult);
+        public delegate void OnDNSResponse(IntPtr DNSQueryResult, string domain);
 
         /// <summary>
         ///    
@@ -135,7 +157,83 @@ namespace DNS
         /// <param name="pName">им€ записи</param>
         /// <param name="qt">тип записи</param>
         /// <param name="value">значение записи</param>
-        public delegate void OnDNSResponseText(string pName, QueryTypes qt, string value);
+        public delegate void OnDNSResponseText(string domain, QueryTypes qt, string value);
+
+        /// <summary>
+        ///     ѕолучаем все записи
+        /// </summary>
+        /// <param name="domain"></param>
+        /// <param name="queryType">домен</param>
+        /// <returns></returns>
+        public static List<ResponseRecord> GetRecords(string domain, out System.ComponentModel.Win32Exception errCode)
+        {
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+
+            errCode = null;
+            List<ResponseRecord> res = new List<ResponseRecord>();
+
+            OnGetRecordsInText = (delegate(string pName, QueryTypes qt, string value) 
+            {
+                ResponseRecord _r = new ResponseRecord(qt, pName, value);
+                if(!ResponseRecord.Exists(res, _r))
+                    res.Add(_r); 
+            });
+
+            QueryTypes[] qtps = new QueryTypes[] { QueryTypes.DNS_TYPE_A, QueryTypes.DNS_TYPE_NS, QueryTypes.DNS_TYPE_CNAME, QueryTypes.DNS_TYPE_DNAME, QueryTypes.DNS_TYPE_MX, QueryTypes.DNS_TYPE_SOA, QueryTypes.DNS_TYPE_SRV, QueryTypes.DNS_TYPE_TEXT };
+            foreach (QueryTypes qType in qtps)
+            {
+                IntPtr ResultPtr = IntPtr.Zero;
+                IntPtr RecordPtr = IntPtr.Zero;
+
+                int result = DnsQuery(ref domain, qType, QueryOptions.DNS_QUERY_BYPASS_CACHE, 0, ref ResultPtr, 0);
+                if (result == 9501) continue;
+                if (result != 0) { errCode = new System.ComponentModel.Win32Exception(result); continue; };
+
+                RR.DNS_HEADER recMx;
+                for (RecordPtr = ResultPtr; !RecordPtr.Equals(IntPtr.Zero); RecordPtr = recMx.pNext)
+                {
+                    OnData(RecordPtr, domain);
+                    recMx = (RR.DNS_HEADER)Marshal.PtrToStructure(RecordPtr, typeof(RR.DNS_HEADER));   
+                };
+                DnsRecordListFree(ResultPtr, 0);
+            };            
+            return res;
+        }
+
+        /// <summary>
+        ///     ѕолучаем все записи согласно типу запроса
+        /// </summary>
+        /// <param name="domain"></param>
+        /// <param name="queryType">домен</param>
+        /// <param name="errCode">тип запроса</param>
+        /// <returns></returns>
+        public static List<ResponseRecord> GetRecords(string domain, QueryTypes queryType, out System.ComponentModel.Win32Exception errCode)
+        {
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+
+            if (queryType == QueryTypes.DNS_TYPE_ALL) return GetRecords(domain, out errCode);
+            if (queryType == QueryTypes.DNS_TYPE_ANY) return GetRecords(domain, out errCode);            
+
+            errCode = null;
+            List<ResponseRecord> res = new List<ResponseRecord>();
+
+            IntPtr ResultPtr = IntPtr.Zero;
+            IntPtr RecordPtr = IntPtr.Zero;
+
+            int result = DnsQuery(ref domain, queryType, QueryOptions.DNS_QUERY_BYPASS_CACHE, 0, ref ResultPtr, 0);
+            if (result != 0) { errCode = new System.ComponentModel.Win32Exception(result); return res; };
+
+            OnGetRecordsInText = (delegate(string pName, QueryTypes qt, string value){
+                res.Add(new ResponseRecord(qt, pName, value)); });
+            RR.DNS_HEADER recMx;
+            for (RecordPtr = ResultPtr; !RecordPtr.Equals(IntPtr.Zero); RecordPtr = recMx.pNext)
+            {
+                OnData(RecordPtr, domain);
+                recMx = (RR.DNS_HEADER)Marshal.PtrToStructure(RecordPtr, typeof(RR.DNS_HEADER));
+            }
+            DnsRecordListFree(ResultPtr, 0);
+            return res;
+        }
 
         /// <summary>
         ///     ѕолучаем все записи согласно типу запроса
@@ -146,7 +244,7 @@ namespace DNS
         /// <returns>число записей</returns>
         public static int GetRecords(string domain, QueryTypes queryType, OnDNSResponse onResponse, OnDNSResultCode onResultCode)
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
 
             int count = 0;
             IntPtr ResultPtr = IntPtr.Zero;
@@ -154,7 +252,15 @@ namespace DNS
 
             int result = DnsQuery(ref domain, queryType, QueryOptions.DNS_QUERY_BYPASS_CACHE, 0, ref ResultPtr, 0);
             if (onResultCode != null) onResultCode(result);
-            if (result != 0) throw new System.ComponentModel.Win32Exception(result);
+            if (result != 0)
+            {
+                if (result == 9501) return 0;
+                if (onResultCode != null)
+                    onResultCode(result);
+                else
+                    throw new System.ComponentModel.Win32Exception(result);
+            };
+            
             // http://msdn.microsoft.com/en-us/library/windows/desktop/ms681391(v=vs.85).aspx
             // 1460 Timeout Expired
             // 9001 (0x2329) DNS server unable to interpret format.
@@ -165,7 +271,7 @@ namespace DNS
             RR.DNS_HEADER recMx;
             for (RecordPtr = ResultPtr; !RecordPtr.Equals(IntPtr.Zero); RecordPtr = recMx.pNext)
             {
-                if (onResponse != null) onResponse(RecordPtr);
+                if (onResponse != null) onResponse(RecordPtr, domain);
                 recMx = (RR.DNS_HEADER)Marshal.PtrToStructure(RecordPtr, typeof(RR.DNS_HEADER));
                 count++;
             }
@@ -187,8 +293,9 @@ namespace DNS
             OnGetRecordsInText = null;
             return count;
         }
+
         private static OnDNSResponseText OnGetRecordsInText;
-        private static void OnData(IntPtr DNSQueryResult)
+        private static void OnData(IntPtr DNSQueryResult, string domain)
         {
             DNSLookUp.RR.DNS_HEADER recMx = (DNSLookUp.RR.DNS_HEADER)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_HEADER));
             switch (recMx.wType)
@@ -196,20 +303,20 @@ namespace DNS
                 case DNSLookUp.QueryTypes.DNS_TYPE_A: // GetHostAddress
                     DNSLookUp.RR.DNS_A_DATA a = (DNSLookUp.RR.DNS_A_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_A_DATA));
                     if (OnGetRecordsInText != null)
-                        OnGetRecordsInText(recMx.pName, recMx.wType, a.IP[0].ToString() + "." + a.IP[1].ToString() + "." + a.IP[2].ToString() + "." + a.IP[3].ToString());
+                        OnGetRecordsInText(domain, recMx.wType, a.IP[0].ToString() + "." + a.IP[1].ToString() + "." + a.IP[2].ToString() + "." + a.IP[3].ToString());
                     break;
 
                 case DNSLookUp.QueryTypes.DNS_TYPE_SOA:
                     DNSLookUp.RR.DNS_SOA_DATA soa = (DNSLookUp.RR.DNS_SOA_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_SOA_DATA));
                     if (OnGetRecordsInText != null)
                     {
-                        OnGetRecordsInText(soa.pName, recMx.wType, "Admin " + soa.pNameAdministrator);
-                        OnGetRecordsInText(soa.pName, recMx.wType, "Server " + soa.pNamePrimaryServer);
+                        OnGetRecordsInText(domain, recMx.wType, "Admin " + soa.pNameAdministrator);
+                        OnGetRecordsInText(domain, recMx.wType, "Server " + soa.pNamePrimaryServer);
                     };
                     break;
 
                 case DNSLookUp.QueryTypes.DNS_TYPE_PTR:
-                case DNSLookUp.QueryTypes.DNS_TYPE_NS: // GetDNSServer
+                case DNSLookUp.QueryTypes.DNS_TYPE_NS:    // GetDNSServer
                 case DNSLookUp.QueryTypes.DNS_TYPE_CNAME: // GetDNSCName
                 case DNSLookUp.QueryTypes.DNS_TYPE_DNAME:
                 case DNSLookUp.QueryTypes.DNS_TYPE_MB:
@@ -219,20 +326,20 @@ namespace DNS
                 case DNSLookUp.QueryTypes.DNS_TYPE_MR:
                     DNSLookUp.RR.DNS_PTR_DATA ptr = (DNSLookUp.RR.DNS_PTR_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_PTR_DATA));
                     if (OnGetRecordsInText != null)
-                        OnGetRecordsInText(recMx.pName, recMx.wType, ptr.pNameHost);
+                        OnGetRecordsInText(domain, recMx.wType, ptr.pNameHost);
                     break;
 
                 case DNSLookUp.QueryTypes.DNS_TYPE_MINFO:
                 case DNSLookUp.QueryTypes.DNS_TYPE_RP:
                     DNSLookUp.RR.DNS_MINFO_DATA minfo = (DNSLookUp.RR.DNS_MINFO_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_MINFO_DATA));
                     if (OnGetRecordsInText != null)
-                        OnGetRecordsInText(recMx.pName, recMx.wType, minfo.pNameMailbox + " ERRORS " + minfo.pNameErrorsMailbox);
+                        OnGetRecordsInText(domain, recMx.wType, minfo.pNameMailbox + " ERRORS " + minfo.pNameErrorsMailbox);
                     break;
 
                 case DNSLookUp.QueryTypes.DNS_TYPE_MX:
-                    DNSLookUp.RR.DNS_MX_DATA mx = (DNSLookUp.RR.DNS_MX_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_MX_DATA));
+                    DNSLookUp.RR.DNS_MX_DATA mx = (DNSLookUp.RR.DNS_MX_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_MX_DATA));                    
                     if (OnGetRecordsInText != null)
-                        OnGetRecordsInText(recMx.pName, recMx.wType, mx.pNameExchange);
+                        OnGetRecordsInText(domain, recMx.wType, mx.pNameExchange);
                     break;
 
                 case DNSLookUp.QueryTypes.DNS_TYPE_HINFO:
@@ -241,11 +348,12 @@ namespace DNS
                 case DNSLookUp.QueryTypes.DNS_TYPE_TEXT: // GetDNSText
                     DNSLookUp.RR.DNS_TXT_DATA txt = (DNSLookUp.RR.DNS_TXT_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_TXT_DATA));
                     if (OnGetRecordsInText != null)
-                        OnGetRecordsInText(recMx.pName, recMx.wType, txt.text);
+                        OnGetRecordsInText(domain, recMx.wType, txt.text);
                     break;
                 case  DNSLookUp.QueryTypes.DNS_TYPE_SRV:
-                    DNSLookUp.RR.DNS_SRV_DATA src = (DNSLookUp.RR.DNS_SRV_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_SRV_DATA));
-                    
+                    DNSLookUp.RR.DNS_SRV_DATA srv = (DNSLookUp.RR.DNS_SRV_DATA)Marshal.PtrToStructure(DNSQueryResult, typeof(DNSLookUp.RR.DNS_SRV_DATA));
+                    if (OnGetRecordsInText != null)
+                        OnGetRecordsInText(domain, recMx.wType, srv.pNameTarget + ":" + srv.wPort.ToString());
                     break;
             };
         }
@@ -257,7 +365,7 @@ namespace DNS
         /// <returns>список адресов</returns>
         public static System.Net.IPAddress[] Get_A(string domain)
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
 
             List<System.Net.IPAddress> list = new List<System.Net.IPAddress>();
 
@@ -286,7 +394,7 @@ namespace DNS
         /// <returns>сервера</returns>
         public static string[] Get_SOA(string domain)
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
 
             List<string> list = new List<string>();
 
@@ -304,13 +412,13 @@ namespace DNS
                 if (recMx.wType == DNSLookUp.QueryTypes.DNS_TYPE_SOA)
                 {
                     DNSLookUp.RR.DNS_SOA_DATA soa = ((DNSLookUp.RR.DNS_SOA_DATA)Marshal.PtrToStructure(RecordPtr, typeof(DNSLookUp.RR.DNS_SOA_DATA)));
-                    list.Add(soa.pNameAdministrator+"@"+soa.pNamePrimaryServer);
+                    list.Add("Admin " + soa.pNameAdministrator);
+                    list.Add("Server " + soa.pNamePrimaryServer);
                 };
             };
             DnsRecordListFree(ResultPtr, 0);
             return list.ToArray();
         }
-
 
         /// <summary>
         ///     (IN NS) ѕолучаем список DNS серверов дл€ домена
@@ -319,7 +427,7 @@ namespace DNS
         /// <returns>сервера</returns>
         public static string[] Get_NS(string domain)
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
 
             List<string> list = new List<string>();
 
@@ -348,7 +456,7 @@ namespace DNS
         /// <returns>сервера</returns>
         public static string[] Get_CNAME(string domain)
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+            //if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
 
             List<string> list = new List<string>();
 
@@ -377,7 +485,7 @@ namespace DNS
         /// <returns>записи</returns>
         public static string[] Get_TXT(string domain)
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
 
             List<string> list = new List<string>();
 
@@ -406,7 +514,7 @@ namespace DNS
         /// <returns></returns>
         public static string[] Get_SRV(string domain)
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
 
             List<string> list = new List<string>();
 
@@ -438,7 +546,7 @@ namespace DNS
         /// <returns></returns>
         public static string[] Get_MX(string domain)
         {
-            if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
+            // if (Environment.OSVersion.Platform != PlatformID.Win32NT) throw new NotSupportedException();
 
             List<string> list = new List<string>();
 
@@ -462,9 +570,6 @@ namespace DNS
             DnsRecordListFree(ResultPtr, 0);
             return list.ToArray();
         }
-
-
-
 
         // http://msdn.microsoft.com/en-us/library/ms682082
         public struct RR
